@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Held Breath</title>
+<meta name="description" content="Blow into your microphone, or press and hold, to inflate a glossy bubble. Stop to set it free. Go too long and it bursts.">
+<style>
+/* Layout: open sky, edge to edge. The only things in it are the shapes you breathe into being. */
+:root {
+  --sky-top: #5AA9B6;
+  --sky-mid: #8CC7C8;
+  --sky-low: #CFE7DE;
+  --fg: #FFFFFF;
+  --muted: #FFFFFFE0;
+  --card: #FFFFFF47;
+  --card-hover: #FFFFFF73;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  overflow: hidden;
+  background-color: #EDAE5C;
+  background-image:
+    radial-gradient(55% 75% at 100% 100%, #E2553F 0%, #E2553F00 72%),
+    radial-gradient(48% 120% at 0% 30%, #3F78B8 0%, #3F78B800 70%),
+    radial-gradient(40% 90% at 20% 100%, #DCE8F4 0%, #DCE8F400 72%),
+    linear-gradient(100deg, #5C8FC6 0%, #C9D6E2 24%, #EDB45F 50%, #F0A552 72%, #E8704A 100%);
+  background-attachment: fixed;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+body::before {   /* film grain */
+  content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .32; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 1 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+/* liquid glass: clear, blurred, with a bright upper edge */
+.glass {
+  background: linear-gradient(160deg, #FFFFFF52, #FFFFFF14 60%, #FFFFFF2E);
+  border: 1px solid #FFFFFF73;
+  box-shadow: inset 0 1px 0 #FFFFFFB3, inset 0 -1px 0 #FFFFFF26, 0 10px 30px -12px #0000004D;
+  -webkit-backdrop-filter: blur(18px) saturate(180%); backdrop-filter: blur(18px) saturate(180%);
+  color: #FFFFFFEB; text-shadow: 0 1px 1px #00000026;
+}
+canvas#air { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+canvas#air:focus-visible { outline: 2px solid #FFFFFFB3; outline-offset: -4px; }
+.plate {
+  position: fixed; left: 0; top: 0; right: 0;
+  padding: calc(20px + env(safe-area-inset-top, 0px)) max(20px, env(safe-area-inset-right, 0px)) 0 max(20px, env(safe-area-inset-left, 0px));
+  pointer-events: none;
+}
+h1 { display: inline-block; margin: 0; padding: 12px 22px; border-radius: 999px; font-size: 22px; font-weight: 600; letter-spacing: -.022em; line-height: 1; }
+.foot {
+  position: fixed; left: 0; right: 0; bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  padding: 0 20px; pointer-events: none;
+}
+#mic {
+  pointer-events: auto;
+  font: inherit; font-size: 15px; font-weight: 400;
+  border-radius: 999px; display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 22px 12px 18px; cursor: pointer; font-weight: 500;
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1);
+}
+#mic:hover { transform: translateY(-2px); }
+#mic:active { transform: scale(.97); }
+#mic:focus-visible { outline: 2px solid #FFFFFF; outline-offset: 2px; }
+#mic[hidden] { display: none; }
+#mic.on { background: linear-gradient(160deg, #FFFFFFD9, #FFFFFF8C); color: #1D1D1F; text-shadow: none; }
+.hint {
+  margin: 0; text-align: center; padding: 10px 20px; border-radius: 999px;
+  font-size: 15px; font-weight: 400; letter-spacing: -.01em;
+  transition: opacity 1.2s ease; text-wrap: balance;
+}
+.hint.gone { opacity: 0; }
+/* the wand breath comes out of: a loop on a stick that follows the pointer */
+.wand { position: fixed; left: 0; top: 0; width: 28px; height: 28px; margin: -14px 0 0 -14px; border: 2px solid #FFFFFFD9; border-radius: 50%; pointer-events: none; }
+.wand::after { content: ""; position: absolute; left: 22px; top: 22px; width: 2px; height: 40px; background: #FFFFFFD9; border-radius: 2px; transform-origin: top; transform: rotate(-38deg); }
+.wand[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { #mic { transition: none; } }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<canvas id="air" tabindex="0" aria-label="Open sky. Blow into your microphone, or press and hold anywhere, to inflate a glossy bubble. Stop to set it free."></canvas>
+<div class="wand" id="wand" hidden></div>
+<div class="foot">
+  <button id="mic" class="glass" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span id="micLabel">Use your breath</span></button>
+  <p class="hint glass" id="hint">Press and hold. Let go when it feels right.</p>
+</div>
+
+<script>
+(() => {
+  const cv = document.getElementById('air');
+  const hintEl = document.getElementById('hint');
+  const micBtn = document.getElementById('mic');
+  const wandEl = document.getElementById('wand');
+  const micLabel = document.getElementById('micLabel');
+  if (!window.THREE) { hintEl.textContent = "This couldn't load. Check your connection and reload."; micBtn.hidden = true; return; }
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+
+  /* ---------- stage ---------- */
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.NoToneMapping;
+  const scene = new THREE.Scene();
+  const CAM_Z = 14, FOV = 40;
+  const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
+  camera.position.set(0, 0, CAM_Z);
+  const TAN = Math.tan(FOV * Math.PI / 360);
+  const halfH = (z) => TAN * (CAM_Z - z), halfW = (z) => halfH(z) * camera.aspect;
+
+  // the sky the bubbles reflect: teal above, pale at the horizon, warm below, one bright sun
+  (() => {
+    const c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+    const g = c.getContext('2d');
+    let gr = g.createLinearGradient(0, 0, 1024, 0);
+    gr.addColorStop(0, '#E2553F'); gr.addColorStop(0.25, '#4A82C0'); gr.addColorStop(0.45, '#DCE8F4'); gr.addColorStop(0.62, '#EDB45F'); gr.addColorStop(0.85, '#E8704A'); gr.addColorStop(1, '#E2553F');
+    g.fillStyle = gr; g.fillRect(0, 0, 1024, 512);
+    gr = g.createLinearGradient(0, 0, 0, 512);
+    gr.addColorStop(0, 'rgba(255,255,255,0.55)'); gr.addColorStop(0.45, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(60,30,20,0.25)');
+    g.fillStyle = gr; g.fillRect(0, 0, 1024, 512);
+    g.fillStyle = '#FFFFFF';
+    g.fillRect(250, 60, 150, 90); g.fillRect(640, 40, 90, 120); g.fillRect(880, 90, 70, 50);   // studio softboxes
+    const tex = new THREE.CanvasTexture(c); tex.mapping = THREE.EquirectangularReflectionMapping; tex.encoding = THREE.sRGBEncoding;
+    const pm = new THREE.PMREMGenerator(renderer);
+    scene.environment = pm.fromEquirectangular(tex).texture;
+    tex.dispose(); pm.dispose();
+  })();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xffb9a6, 0.3));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.75); sun.position.set(-5, 9, 7); scene.add(sun);
+
+  /* ---------- shapes: a family of soft inflatable forms, not just spheres ---------- */
+  function makeShape(o) {
+    const geo = new THREE.SphereGeometry(1, 64, 44);
+    const pos = geo.attributes.position, nor = geo.attributes.normal;
+    const [a, b, c, d] = [rand(0, 6.28), rand(0, 6.28), rand(0, 6.28), rand(0, 6.28)];
+    const f = (n) => {
+      let k = 1 + o.amp * (Math.sin(n.x * 2.3 + a) * Math.sin(n.y * 2.1 + b) + 0.6 * Math.sin(n.z * 2.7 + c + n.x * 1.7) + 0.4 * Math.sin((n.x + n.y) * 3.1 + d));
+      if (o.peanut) k *= 0.72 + o.peanut * Math.pow(Math.abs(n.x), 1.4);
+      const p = new THREE.Vector3(n.x * k * o.sx, n.y * k * o.sy, n.z * k * o.sz);
+      if (o.tear) p.y += o.tear * Math.pow(Math.max(n.y, 0), 2.2);
+      if (o.bend) p.y += o.bend * p.x * p.x;
+      return p;
+    };
+    const n = new THREE.Vector3(), t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), up = new THREE.Vector3();
+    let maxR = 0; const pts = [];
+    for (let i = 0; i < pos.count; i++) {
+      n.fromBufferAttribute(pos, i).normalize();
+      const p = f(n); pts.push(p); maxR = Math.max(maxR, p.length());
+      // normal from how the surface moves when the direction is nudged two ways
+      up.set(Math.abs(n.y) > 0.9 ? 1 : 0, Math.abs(n.y) > 0.9 ? 0 : 1, 0);
+      t1.crossVectors(n, up).normalize(); t2.crossVectors(n, t1).normalize();
+      const e = 0.02;
+      const pa = f(n.clone().addScaledVector(t1, e).normalize()).sub(p), pb = f(n.clone().addScaledVector(t2, e).normalize()).sub(p);
+      const nn = pa.cross(pb).normalize(); if (nn.dot(n) < 0) nn.negate();
+      nor.setXYZ(i, nn.x, nn.y, nn.z);
+    }
+    pts.forEach((p, i) => pos.setXYZ(i, p.x / maxR, p.y / maxR, p.z / maxR));
+    geo.computeBoundingSphere();
+    return geo;
+  }
+  const BALL = new THREE.SphereGeometry(1, 96, 64);
+
+  /* ---------- skin: glossy, a little see-through, two colors melting into each other ---------- */
+  /* ---------- glass: a solid crystal ball. It bends the backdrop upside down inside itself,
+     thickens toward the rim, and catches the studio lights. ---------- */
+  const RES = { value: new THREE.Vector2(1, 1) };
+  const PALETTE = [0xF27DB4, 0xF27DB4, 0xFFFFFF, 0x7DB4F2, 0xFFB45E, 0xFF8C78, 0xB48CF2, 0x7FDCC4];
+  const GLASS_VERT = `
+    varying vec3 vN; varying vec3 vV;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz);
+      gl_Position = projectionMatrix * mv;
+    }`;
+  const GLASS_FRAG = `
+    uniform vec2 uRes; uniform float uSR; uniform vec3 uTint; uniform float uThin;
+    varying vec3 vN; varying vec3 vV;
+    vec3 backdrop(vec2 u) {                       // the page's gradient, rebuilt so the glass can bend it
+      float t = clamp(u.x + (0.5 - u.y) * 0.18, 0.0, 1.0);
+      vec3 c = mix(vec3(0.361, 0.561, 0.776), vec3(0.788, 0.839, 0.886), smoothstep(0.0, 0.24, t));
+      c = mix(c, vec3(0.929, 0.706, 0.373), smoothstep(0.24, 0.5, t));
+      c = mix(c, vec3(0.941, 0.647, 0.322), smoothstep(0.5, 0.72, t));
+      c = mix(c, vec3(0.910, 0.439, 0.290), smoothstep(0.72, 1.0, t));
+      c = mix(c, vec3(0.863, 0.910, 0.957), 1.0 - smoothstep(0.0, 0.72, length((u - vec2(0.2, 0.0)) / vec2(0.4, 0.9))));
+      c = mix(c, vec3(0.247, 0.471, 0.722), 1.0 - smoothstep(0.0, 0.7, length((u - vec2(0.0, 0.7)) / vec2(0.48, 1.2))));
+      c = mix(c, vec3(0.886, 0.333, 0.247), 1.0 - smoothstep(0.0, 0.72, length((u - vec2(1.0, 0.0)) / vec2(0.55, 0.75))));
+      return c;
+    }
+    float box(vec2 p, vec2 c, vec2 h, float soft) { vec2 d = abs(p - c) - h; return 1.0 - smoothstep(0.0, soft, max(d.x, d.y)); }
+    void main() {
+      vec3 N = normalize(vN); vec3 V = normalize(vV);
+      float ndv = clamp(dot(N, V), 0.0, 1.0);
+      float fr = 1.0 - ndv;
+      vec3 R = reflect(-V, N);
+      // clear glass: the middle is almost nothing, so the backdrop shows straight through
+      float rim = pow(fr, 3.2);
+      float lights = box(R.xy, vec2(-0.5, 0.52), vec2(0.2, 0.13), 0.1) * 0.55
+                   + box(R.xy, vec2(0.5, 0.62), vec2(0.06, 0.09), 0.06) * 0.25
+                   + pow(max(dot(R, normalize(vec3(-0.35, 0.6, 0.72))), 0.0), 220.0)
+                   + box(R.xy, vec2(0.3, -0.62), vec2(0.22, 0.05), 0.14) * 0.1;
+      float glow = pow(max(dot(N, normalize(vec3(0.45, -0.7, 0.55))), 0.0), 5.0) * 0.16;
+      vec3 col = mix(mix(vec3(1.0), uTint, 0.55), vec3(1.0), clamp(lights + rim * 0.7, 0.0, 1.0));
+      float a = 0.035 * uThin + 0.16 * smoothstep(0.5, 0.92, fr) * uThin + rim * 0.55 + lights + glow;
+      gl_FragColor = vec4(col, clamp(a, 0.0, 1.0) * smoothstep(0.0, 0.08, ndv));
+    }`;
+  function makeSkin() {
+    const tint = new THREE.Color(pick(PALETTE));
+    const m = new THREE.ShaderMaterial({
+      vertexShader: GLASS_VERT, fragmentShader: GLASS_FRAG, transparent: true, depthWrite: false,
+      uniforms: { uRes: RES, uSR: { value: 0.05 }, uTint: { value: new THREE.Vector3(tint.r, tint.g, tint.b) }, uThin: { value: 1 } }
+    });
+    m.color = tint; m.userData = { c2: tint };
+    return m;
+  }
+
+  /* ---------- bubbles ---------- */
+  const bubbles = [];
+  const held = new Map();
+  const drops = [];
+  let made = 0;
+  const DROP_GEO = new THREE.SphereGeometry(1, 12, 8);
+
+  function newBubble(x, y, z) {
+    const mesh = new THREE.Mesh(BALL, makeSkin());
+    scene.add(mesh);
+    const unit = clamp(Math.min(halfH(0), halfW(0)) / 5, 0.55, 1);
+    return {
+      mesh, x, y, z: z || 0, vx: 0, vy: 0, vz: 0, r: 0.14,
+      burstR: rand(1.15, 2.35) * unit, gain: 1, kick: 0, strain: 0,
+      spin: new THREE.Vector3(rand(-0.25, 0.25), rand(-0.3, 0.3), rand(-0.2, 0.2)),
+      sway: rand(0, 6.28), ph: rand(0, 6.28), age: 0, life: rand(16, 30), free: false, px: x, py: y
+    };
+  }
+  function removeBubble(b) { scene.remove(b.mesh); b.mesh.material.dispose(); }
+  function countMade() { made++; if (made === 2) hintEl.classList.add('gone'); }
+
+  /* ---------- sound ---------- */
+  let audio = null, deafUntil = 0;
+  function ensureAudio() {
+    if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; } }
+    if (audio && audio.state === 'suspended') audio.resume();
+  }
+  function popSound(r) {
+    if (!audio) return;
+    try {
+      const t0 = audio.currentTime, len = 0.1;
+      const buf = audio.createBuffer(1, Math.floor(audio.sampleRate * len), audio.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
+      const src = audio.createBufferSource(); src.buffer = buf;
+      const bp = audio.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = clamp(2600 - r * 800, 450, 2600); bp.Q.value = 1.3;
+      const g = audio.createGain(); g.gain.setValueAtTime(clamp(0.14 + r * 0.14, 0.14, 0.5), t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + len);
+      src.connect(bp); bp.connect(g); g.connect(audio.destination); src.start(t0);
+      deafUntil = performance.now() + 260;
+    } catch (e) {}
+  }
+
+  function pop(b, big) {
+    const n = Math.round(clamp(10 + b.r * 9, 10, 34));
+    const base = b.mesh.material.color, c2 = b.mesh.material.userData.c2;
+    for (let i = 0; i < n; i++) {
+      const dir = new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize();
+      const m = new THREE.Mesh(DROP_GEO, new THREE.MeshStandardMaterial({ color: Math.random() < 0.5 ? base : c2, roughness: 0.03, metalness: 0, transparent: true, envMapIntensity: 1.3 }));
+      m.position.set(b.x, b.y, b.z).addScaledVector(dir, b.r * 0.9);
+      const s = rand(0.03, 0.09) * (big ? 1.3 : 1); m.scale.setScalar(s);
+      scene.add(m);
+      drops.push({ m, v: dir.multiplyScalar(rand(1.2, 4.2) * (big ? 1.4 : 1)), life: rand(0.5, 0.95), max: 0.95, s });
+    }
+    popSound(b.r);
+    removeBubble(b);
+  }
+
+  /* ---------- pointer ---------- */
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  const wand = { x: 0, y: 0, cx: 0, cy: 0, set: false };
+  function toWorld(cx, cy) {
+    ndc.set(cx / window.innerWidth * 2 - 1, -(cy / window.innerHeight * 2 - 1));
+    ray.setFromCamera(ndc, camera);
+    const p = new THREE.Vector3(); ray.ray.intersectPlane(plane, p); return p;
+  }
+  function moveWand(cx, cy) {
+    const p = toWorld(cx, cy); wand.x = p.x; wand.y = p.y; wand.cx = cx; wand.cy = cy; wand.set = true;
+    wandEl.style.transform = `translate(${cx}px, ${cy}px)`;
+  }
+  cv.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); ensureAudio();
+    moveWand(e.clientX, e.clientY);
+    const hits = ray.intersectObjects(bubbles.map(b => b.mesh));
+    if (hits.length) { const i = bubbles.findIndex(b => b.mesh === hits[0].object); if (i >= 0) { pop(bubbles[i], false); bubbles.splice(i, 1); } return; }
+    if (mic.on) return;                                   // in breath mode, only breath makes bubbles
+    held.set(e.pointerId, newBubble(wand.x, wand.y, 0));
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  });
+  cv.addEventListener('pointermove', (e) => {
+    moveWand(e.clientX, e.clientY);
+    const b = held.get(e.pointerId); if (b) { b.px = wand.x; b.py = wand.y; }
+  });
+  function setFree(key) {
+    const b = held.get(key); if (!b) return;
+    held.delete(key);
+    b.free = true; b.kick = 0.16;
+    b.vx = clamp(b.vx, -4, 4); b.vy = clamp(b.vy, -4, 4); b.vz = rand(-0.5, 0.7);
+    bubbles.push(b); countMade();
+  }
+  cv.addEventListener('pointerup', (e) => setFree(e.pointerId));
+  cv.addEventListener('pointercancel', (e) => setFree(e.pointerId));
+  cv.addEventListener('keydown', (e) => {
+    if (e.key === ' ' && !e.repeat && !held.has('key') && !mic.on) { e.preventDefault(); ensureAudio(); held.set('key', newBubble(wand.x, wand.y, 0)); }
+  });
+  cv.addEventListener('keyup', (e) => { if (e.key === ' ') setFree('key'); });
+
+  /* ---------- breath: the microphone only measures loudness; nothing is recorded or sent ---------- */
+  const mic = { on: false, analyser: null, time: null, freq: null, floor: 0.01, level: 0, strength: 0, blowT: 0, quietT: 0, blowing: false };
+  function setBreath(on) {
+    mic.on = on; made = 0;
+    micBtn.classList.toggle('on', on); micBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    micLabel.textContent = on ? 'Breath on' : 'Use your breath';
+    wandEl.hidden = !on;
+    hintEl.classList.remove('gone');
+    hintEl.textContent = on ? 'Blow gently toward your microphone. Stop to let it go.' : 'Press and hold. Let go when it feels right.';
+    if (!on) { mic.blowing = false; mic.blowT = 0; setFree('breath'); }
+    else if (!wand.set) moveWand(window.innerWidth / 2, window.innerHeight * 0.6);
+  }
+  micBtn.addEventListener('click', async () => {
+    ensureAudio();
+    if (mic.analyser) return setBreath(!mic.on);          // already allowed: just switch modes
+    const fail = (msg) => { hintEl.classList.remove('gone'); hintEl.textContent = msg; };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !audio) return fail("The microphone isn't available here. Press and hold instead.");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      const src = audio.createMediaStreamSource(stream);
+      mic.analyser = audio.createAnalyser(); mic.analyser.fftSize = 1024; mic.analyser.smoothingTimeConstant = 0.5;
+      src.connect(mic.analyser);
+      mic.time = new Float32Array(mic.analyser.fftSize); mic.freq = new Float32Array(mic.analyser.frequencyBinCount);
+      setBreath(true);
+    } catch (err) { fail("The microphone isn't available here. Press and hold instead."); }
+  });
+  function listen(dt) {
+    if (!mic.on) return;
+    mic.analyser.getFloatTimeDomainData(mic.time);
+    let sum = 0; for (let i = 0; i < mic.time.length; i++) sum += mic.time[i] * mic.time[i];
+    mic.level += (Math.sqrt(sum / mic.time.length) - mic.level) * Math.min(1, dt * 30);
+    // breath on a microphone is a low rumble; speech and claps carry more of their energy higher up
+    mic.analyser.getFloatFrequencyData(mic.freq);
+    const hz = audio.sampleRate / mic.analyser.fftSize;
+    let low = 0, all = 1e-12;
+    for (let i = 1; i < mic.freq.length; i++) { const v = Math.pow(10, mic.freq[i] / 10); all += v; if (i * hz < 800) low += v; }
+    const threshold = Math.max(0.03, mic.floor * 3.5);
+    const loud = mic.level > threshold && low / all > 0.45 && performance.now() > deafUntil;
+    if (!loud) mic.floor += (Math.min(mic.level, 0.05) - mic.floor) * Math.min(1, dt * 0.8);
+    mic.strength = clamp((mic.level - threshold) / 0.22, 0, 1);
+    if (loud) { mic.blowT += dt; mic.quietT = 0; } else { mic.quietT += dt; if (mic.quietT > 0.16) mic.blowT = 0; }
+    if (!mic.blowing && mic.blowT > 0.07) { mic.blowing = true; if (!held.has('breath')) held.set('breath', newBubble(wand.x, wand.y, 0)); }
+    if (mic.blowing && mic.quietT > 0.16) { mic.blowing = false; const b = held.get('breath'); if (b) { b.vy = 0.6 + mic.strength; setFree('breath'); } }
+    const b = held.get('breath');
+    if (b) { b.px = wand.x; b.py = wand.y; b.gain = 0.6 + mic.strength * 0.9; }
+    wandEl.style.boxShadow = `0 0 ${Math.round(clamp(mic.level * 160, 0, 26))}px #FFFFFF, inset 0 1px 0 #FFFFFFB3`;
+  }
+
+  /* ---------- simulate ---------- */
+  function place(b, t) {
+    const m = b.mesh;
+    m.position.set(b.x, b.y, b.z);
+    m.material.uniforms.uSR.value = b.r / (2 * halfH(b.z));
+    m.material.uniforms.uThin.value = b.free ? 1 : 1 - 0.45 * b.strain * b.strain;   // blown thin, the color drains
+    // stretched skin trembles; a freed bubble jiggles and settles
+    m.scale.setScalar(b.r);
+  }
+  function update(dt, t) {
+    listen(dt);
+    held.forEach((b, id) => {
+      b.strain = b.r / b.burstR;
+      b.r += 0.62 * b.gain * (1 - 0.45 * b.strain) * dt;                 // growth slows as the skin stretches
+      const nx = b.x + (b.px - b.x) * Math.min(1, dt * 14), ny = b.y + (b.py - b.y) * Math.min(1, dt * 14);
+      b.vx = (nx - b.x) / Math.max(dt, 0.001); b.vy = (ny - b.y) / Math.max(dt, 0.001);
+      b.x = nx; b.y = ny; b.age += dt;
+      place(b, t);
+      if (b.r >= b.burstR) { held.delete(id); pop(b, true); countMade(); if (id === 'breath') { mic.blowing = false; mic.blowT = 0; deafUntil = performance.now() + 500; } }
+    });
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      const b = bubbles[i];
+      b.age += dt; b.kick *= Math.pow(0.1, dt);
+      const rise = 0.28 + 0.42 / b.r;                                    // small ones hurry, big ones drift
+      b.vy += (rise - b.vy) * Math.min(1, dt * 1.5);
+      b.vx -= b.vx * Math.min(1, dt * 0.9);   // no wandering: it settles into a straight, quiet rise
+      b.vz *= Math.pow(0.75, dt);
+      b.x += b.vx * dt; b.y += b.vy * dt; b.z = clamp(b.z + b.vz * dt, -7, 7);
+      const hw = halfW(b.z), hh = halfH(b.z);
+      if (b.x < -hw + b.r * 0.6) { b.x = -hw + b.r * 0.6; b.vx = Math.abs(b.vx) * 0.6; b.kick += 0.04; }
+      if (b.x > hw - b.r * 0.6) { b.x = hw - b.r * 0.6; b.vx = -Math.abs(b.vx) * 0.6; b.kick += 0.04; }
+      if (b.y > hh + b.r * 1.3) { removeBubble(b); bubbles.splice(i, 1); continue; }
+      if (b.age > b.life) { pop(b, false); bubbles.splice(i, 1); continue; }
+      place(b, t);
+    }
+    for (let i = 0; i < bubbles.length; i++) for (let j = i + 1; j < bubbles.length; j++) {
+      const a = bubbles[i], b = bubbles[j];
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z, d = Math.hypot(dx, dy, dz) || 0.01, o = (a.r + b.r) * 0.88 - d;
+      if (o > 0) {
+        const nx = dx / d, ny = dy / d, nz = dz / d, ma = b.r / (a.r + b.r), mb = a.r / (a.r + b.r);
+        a.x -= nx * o * ma * 0.5; a.y -= ny * o * ma * 0.5; a.z -= nz * o * ma * 0.5;
+        b.x += nx * o * mb * 0.5; b.y += ny * o * mb * 0.5; b.z += nz * o * mb * 0.5;
+        a.vx -= nx * 0.5 * ma; a.vy -= ny * 0.5 * ma; b.vx += nx * 0.5 * mb; b.vy += ny * 0.5 * mb;
+        a.kick = Math.min(0.1, a.kick + 0.012); b.kick = Math.min(0.1, b.kick + 0.012);
+      }
+    }
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const d = drops[i];
+      d.life -= dt; d.v.y -= 5.5 * dt; d.v.multiplyScalar(Math.pow(0.35, dt));
+      d.m.position.addScaledVector(d.v, dt);
+      const k = clamp(d.life / d.max, 0, 1); d.m.scale.setScalar(d.s * (0.4 + 0.6 * k)); d.m.material.opacity = Math.min(1, k * 2.5);
+      if (d.life <= 0) { scene.remove(d.m); d.m.material.dispose(); drops.splice(i, 1); }
+    }
+  }
+
+  function fit() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    renderer.getDrawingBufferSize(RES.value);
+  }
+  window.addEventListener('resize', fit);
+  fit();
+  const start = toWorld(window.innerWidth / 2, window.innerHeight * 0.64); wand.x = start.x; wand.y = start.y;
+
+  // some are already adrift when you arrive, a couple of them close to the lens
+  [[-0.55, -0.1, -3, 1.0], [0.5, 0.35, -5, 1.4], [0.15, -0.45, -1, 0.6], [-0.2, 0.5, -6, 1.1], [0.72, -0.3, 2, 0.8], [-0.9, -0.75, 6, 1.6], [0.95, 0.8, 5.5, 1.3], [-0.3, 0.1, -2, 0.35], [0.35, -0.05, 1, 0.28]]
+    .forEach(([fx, fy, z, r]) => {
+      const b = newBubble(fx * halfW(z), fy * halfH(z), z);
+      b.r = r; b.free = true; b.vy = 0.2; b.age = rand(0, 5); bubbles.push(b);
+    });
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = clamp((now - last) / 1000, 0, 0.05); last = now;
+    update(dt, now / 1000);
+    renderer.render(scene, camera);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
